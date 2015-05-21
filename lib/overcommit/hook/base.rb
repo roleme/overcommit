@@ -106,6 +106,19 @@ module Overcommit::Hook
     def in_path?(cmd)
       Overcommit::Utils.in_path?(cmd)
     end
+    # Return directory path in which context this hook is going to run. Default current directory
+    #
+    # @return <String>
+    def directory
+     @config['directory'] || '.'
+    end
+
+    def execute(cmd)
+      Dir.chdir(directory) do
+        puts Dir.pwd
+        Overcommit::Utils.execute(cmd)
+      end
+    end
 
     def execute(cmd)
       Overcommit::Utils.execute(cmd)
