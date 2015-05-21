@@ -110,7 +110,7 @@ module Overcommit::Hook
     #
     # @return <String>
     def directory
-     @config['directory'] || '.'
+      @config['directory'] || '.'
     end
 
     def execute(cmd)
