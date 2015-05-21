@@ -115,7 +115,6 @@ module Overcommit::Hook
 
     def execute(cmd)
       Dir.chdir(directory) do
-        puts Dir.pwd
         Overcommit::Utils.execute(cmd)
       end
     end
