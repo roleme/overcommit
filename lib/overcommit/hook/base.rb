@@ -96,9 +96,9 @@ module Overcommit::Hook
       @config['directory'] || '.'
     end
 
-    def execute(cmd)
+    def execute(cmd, options = {})
       Dir.chdir(directory) do
-        Overcommit::Utils.execute(cmd)
+        Overcommit::Utils.execute(cmd, options)
       end
     end
 
