@@ -1,11 +1,18 @@
-# Bootstrap code coverage instrumentation. This must happen first!
-require 'coveralls'
-Coveralls.wear!
+if ENV['TRAVIS']
+  # When running in Travis, report coverage stats to Coveralls.
+  require 'coveralls'
+  Coveralls.wear!
+else
+  # Otherwise render coverage information in coverage/index.html and display
+  # coverage percentage in the console.
+  require 'simplecov'
+end
 
 require 'overcommit'
 require 'tempfile'
 
-hook_types = Dir[File.join(Overcommit::HOOK_DIRECTORY, '*')].
+hook_types =
+  Dir[File.join(Overcommit::HOOK_DIRECTORY, '*')].
   select { |f| File.directory?(f) }.
   reject { |f| File.basename(f) == 'shared' }.
   sort
@@ -32,6 +39,18 @@ RSpec.configure do |config|
 
   config.mock_with :rspec do |c|
     c.syntax = :should
+  end
+
+  config.around(:each) do |example|
+    # Most tests don't deal with verification, so disable it by default
+    env = {}
+    unless respond_to?(:enable_verification) && enable_verification
+      env['OVERCOMMIT_NO_VERIFY'] = '1'
+    end
+
+    Overcommit::Utils.with_environment env do
+      example.run
+    end
   end
 
   # Much of Overcommit depends on these helpers, so they are aggressively

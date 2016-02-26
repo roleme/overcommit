@@ -30,6 +30,10 @@ module Overcommit::HookContext
         local_sha1 == '0' * 40
       end
 
+      def destructive?
+        deleted? || forced?
+      end
+
       def to_s
         "#{local_ref} #{local_sha1} #{remote_ref} #{remote_sha1}"
       end
@@ -37,7 +41,14 @@ module Overcommit::HookContext
       private
 
       def overwritten_commits
-        `git rev-list #{remote_sha1} ^#{local_sha1}`.split("\n")
+        return @overwritten_commits if defined? @overwritten_commits
+        result = Overcommit::Subprocess.spawn(%W[git rev-list #{remote_sha1} ^#{local_sha1}])
+        if result.success?
+          result.stdout.split("\n")
+        else
+          raise Overcommit::Exceptions::GitRevListError,
+                "Unable to check if commits on the remote ref will be overwritten: #{result.stderr}"
+        end
       end
     end
   end

@@ -11,13 +11,13 @@ module Overcommit::Hook
   end
 
   # Possible types of messages.
-  MESSAGE_TYPES = [:error, :warning]
+  MESSAGE_TYPES = [:error, :warning].freeze
 
   # Functionality common to all hooks.
   class Base # rubocop:disable Metrics/ClassLength
     extend Forwardable
 
-    def_delegators :@context, :modified_files
+    def_delegators :@context, :all_files, :modified_files
     attr_reader :config
 
     # @param config [Overcommit::Configuration]
@@ -42,36 +42,11 @@ module Overcommit::Hook
       if output = check_for_requirements
         status = :fail
       else
-        status, output = process_hook_return_value(run)
+        result = Overcommit::Utils.with_environment(@config.fetch('env', {})) { run }
+        status, output = process_hook_return_value(result)
       end
 
       [transform_status(status), output]
-    end
-
-    # Converts the hook's return value into a canonical form of a tuple
-    # containing status (pass/warn/fail) and output.
-    #
-    # This is intended to support various shortcuts for writing hooks so that
-    # hook authors don't need to work with {Overcommit::Hook::Message} objects
-    # for simple pass/fail hooks. It also saves you from needing to manually
-    # encode logic like "if there are errors, fail; if there are warnings, warn,
-    # otherwise pass." by simply returning an array of
-    # {Overcommit::Hook::Message} objects.
-    #
-    # @param hook_return_value [Symbol, Array<Symbol,String>, Array<Message>]
-    # @return [Array<Symbol,String>] tuple of status and output
-    def process_hook_return_value(hook_return_value)
-      if hook_return_value.is_a?(Array) &&
-         (hook_return_value.first.is_a?(Message) || hook_return_value.empty?)
-        # Process messages into a status and output
-        Overcommit::MessageProcessor.new(
-          self,
-          @config['problem_on_unmodified_line'],
-        ).hook_result(hook_return_value)
-      else
-        # Otherwise return as-is
-        hook_return_value
-      end
     end
 
     def name
@@ -79,11 +54,19 @@ module Overcommit::Hook
     end
 
     def description
-      @config['description'] || "Running #{name}"
+      @config['description'] || "Run #{name}"
     end
 
     def required?
       @config['required']
+    end
+
+    def parallelize?
+      @config['parallelize'] != false
+    end
+
+    def processors
+      @config.fetch('processors', 1)
     end
 
     def quiet?
@@ -166,13 +149,23 @@ module Overcommit::Hook
     # Gets a list of staged files that apply to this hook based on its
     # configured `include` and `exclude` lists.
     def applicable_files
-      @applicable_files ||= modified_files.select { |file| applicable_file?(file) }
+      @applicable_files ||= select_applicable(modified_files)
+    end
+
+    # Gets a list of all files that apply to this hook based on its
+    # configured `include` and `exclude` lists.
+    def included_files
+      @included_files ||= select_applicable(all_files)
     end
 
     private
 
+    def select_applicable(list)
+      list.select { |file| applicable_file?(file) }.sort
+    end
+
     def applicable_file?(file)
-      includes = Array(@config['include']).map do |glob|
+      includes = Array(@config['include']).flatten.map do |glob|
         Overcommit::Utils.convert_glob_to_absolute(glob)
       end
 
@@ -180,7 +173,7 @@ module Overcommit::Hook
         Overcommit::Utils.matches_path?(glob, file)
       end
 
-      excludes = Array(@config['exclude']).map do |glob|
+      excludes = Array(@config['exclude']).flatten.map do |glob|
         Overcommit::Utils.convert_glob_to_absolute(glob)
       end
 
@@ -203,7 +196,8 @@ module Overcommit::Hook
     def check_for_executable
       return unless required_executable && !in_path?(required_executable)
 
-      output = "'#{required_executable}' is not installed (or is not in your PATH)"
+      output = "'#{required_executable}' is not installed, not in your PATH, " \
+               'or does not have execute permissions'
       output << install_command_prompt
 
       output
@@ -236,6 +230,32 @@ module Overcommit::Hook
       return if output.empty?
 
       output.join("\n")
+    end
+
+    # Converts the hook's return value into a canonical form of a tuple
+    # containing status (pass/warn/fail) and output.
+    #
+    # This is intended to support various shortcuts for writing hooks so that
+    # hook authors don't need to work with {Overcommit::Hook::Message} objects
+    # for simple pass/fail hooks. It also saves you from needing to manually
+    # encode logic like "if there are errors, fail; if there are warnings, warn,
+    # otherwise pass." by simply returning an array of
+    # {Overcommit::Hook::Message} objects.
+    #
+    # @param hook_return_value [Symbol, Array<Symbol,String>, Array<Message>]
+    # @return [Array<Symbol,String>] tuple of status and output
+    def process_hook_return_value(hook_return_value)
+      if hook_return_value.is_a?(Array) &&
+         (hook_return_value.first.is_a?(Message) || hook_return_value.empty?)
+        # Process messages into a status and output
+        Overcommit::MessageProcessor.new(
+          self,
+          @config['problem_on_unmodified_line'],
+        ).hook_result(hook_return_value)
+      else
+        # Otherwise return as-is
+        hook_return_value
+      end
     end
 
     # Transforms the hook's status based on custom configuration.

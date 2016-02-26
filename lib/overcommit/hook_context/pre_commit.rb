@@ -15,6 +15,13 @@ module Overcommit::HookContext
       cmd = Overcommit::Utils.parent_command
       amend_pattern = 'commit(\s.*)?\s--amend(\s|$)'
 
+      # Since the ps command can return invalid byte sequences for commands
+      # containing unicode characters, we replace the offending characters,
+      # since the pattern we're looking for will consist of ASCII characters
+      unless cmd.valid_encoding?
+        cmd.encode!('UTF-16be', invalid: :replace, replace: '?').encode!('UTF-8')
+      end
+
       return @amendment if
         # True if the command is a commit with the --amend flag
         @amendment = !(/\s#{amend_pattern}/ =~ cmd).nil?
@@ -25,7 +32,7 @@ module Overcommit::HookContext
         each do |match|
           return @amendment if
             # True if the command uses a git alias for `commit --amend`
-            @amendment = !(/git\s+#{match[0]}/ =~ cmd).nil?
+            @amendment = !(/git(\.exe)?\s+#{match[0]}/ =~ cmd).nil?
         end
 
       @amendment
@@ -88,19 +95,14 @@ module Overcommit::HookContext
     # Renames and deletions are ignored, since there should be nothing to check.
     def modified_files
       unless @modified_files
-        @modified_files = Overcommit::GitRepo.modified_files(staged: true)
+        currently_staged = Overcommit::GitRepo.modified_files(staged: true)
+        @modified_files = currently_staged
 
         # Include files modified in last commit if amending
         if amendment?
           subcmd = 'show --format=%n'
-          @modified_files += Overcommit::GitRepo.modified_files(subcmd: subcmd)
-
-          # Filter out directories. This could happen when changing a symlink to
-          # a directory as part of an amendment, since the symlink will still
-          # appear as a file, but the actual working tree will have a directory.
-          @modified_files.reject! do |file|
-            File.directory?(file) && !File.symlink?(file)
-          end
+          previously_modified = Overcommit::GitRepo.modified_files(subcmd: subcmd)
+          @modified_files |= filter_modified_files(previously_modified)
         end
       end
       @modified_files

@@ -83,8 +83,7 @@ module Overcommit
       lines
     end
 
-    # Returns the names of all files that have been modified from compared to
-    # HEAD.
+    # Returns the names of all files that have been modified compared to HEAD.
     #
     # @param options [Hash]
     # @return [Array<String>] list of absolute file paths
@@ -93,7 +92,7 @@ module Overcommit
       refs = options[:refs]
       subcmd = options[:subcmd] || 'diff'
 
-      `git #{subcmd} --name-only -z --diff-filter=ACM --ignore-submodules=all #{flags} #{refs}`.
+      `git #{subcmd} --name-only -z --diff-filter=ACMR --ignore-submodules=all #{flags} #{refs}`.
         split("\0").
         map(&:strip).
         reject(&:empty?).
@@ -107,10 +106,18 @@ module Overcommit
     # @return [Array<String>] list of absolute file paths
     def list_files(paths = [], options = {})
       ref = options[:ref] || 'HEAD'
-      `git ls-tree --name-only #{ref} #{paths.join(' ')}`.
+      `git ls-tree --name-only #{ref} "#{paths.join('" "')}"`.
         split(/\n/).
         map { |relative_file| File.expand_path(relative_file) }.
         reject { |file| File.directory?(file) } # Exclude submodule directories
+    end
+
+    # Returns whether the specified file/path is tracked by this repository.
+    #
+    # @param path [String]
+    # @return [true,false]
+    def tracked?(path)
+      Overcommit::Utils.execute(%W[git ls-files #{path} --error-unmatch]).success?
     end
 
     # Returns the names of all files that are tracked by git.
@@ -258,6 +265,12 @@ module Overcommit
         sub(/\((HEAD )?detached (from|at) .*?\)/, ''). # ignore detached HEAD
         split(/\s+/).
         reject { |s| s.empty? || s == '*' }
+    end
+
+    # Returns the name of the currently checked out branch.
+    # @return [String]
+    def current_branch
+      `git symbolic-ref --short -q HEAD`.chomp
     end
   end
 end

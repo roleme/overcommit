@@ -1,3 +1,6 @@
+require 'digest'
+require 'json'
+
 module Overcommit
   # Stores configuration for Overcommit and the hooks it runs.
   class Configuration # rubocop:disable ClassLength
@@ -10,22 +13,48 @@ module Overcommit
     def initialize(hash, options = {})
       @options = options.dup
       @options[:logger] ||= Overcommit::Logger.silent
-      @hash = Overcommit::ConfigurationValidator.new.validate(hash, options)
+      @hash = hash # Assign so validator can read original values
+      unless options[:validate] == false
+        @hash = Overcommit::ConfigurationValidator.new.validate(self, hash, options)
+      end
     end
 
     def ==(other)
       super || @hash == other.hash
     end
-    alias_method :eql?, :==
+
+    # Access the configuration as if it were a hash.
+    #
+    # @param key [String]
+    # @return [Array,Hash,Number,String]
+    def [](key)
+      @hash[key]
+    end
 
     # Returns absolute path to the directory that external hook plugins should
     # be loaded from.
     def plugin_directory
-      File.join(Overcommit::Utils.repo_root, @hash['plugin_directory'] || '.githooks')
+      File.join(Overcommit::Utils.repo_root, @hash['plugin_directory'] || '.git-hooks')
     end
 
-    def verify_plugin_signatures?
-      @hash['verify_plugin_signatures'] != false
+    def concurrency
+      @concurrency ||=
+        begin
+          cores = Overcommit::Utils.processor_count
+          content = @hash.fetch('concurrency', '%{processors}')
+          if content.is_a?(String)
+            concurrency_expr = content % { processors: cores }
+
+            a, op, b = concurrency_expr.scan(%r{(\d+)\s*([+\-*\/])\s*(\d+)})[0]
+            if a
+              a.to_i.send(op, b.to_i)
+            else
+              concurrency_expr.to_i
+            end
+          else
+            content.to_i
+          end
+        end
     end
 
     # Returns configuration for all hooks in each hook type.
@@ -63,7 +92,7 @@ module Overcommit
       Overcommit::Utils.supported_hook_types.each do |hook_type|
         hook_type_class_name = Overcommit::Utils.camel_case(hook_type)
 
-        directory = File.join(plugin_directory, hook_type.gsub('-', '_'))
+        directory = File.join(plugin_directory, hook_type.tr('-', '_'))
         plugin_paths = Dir[File.join(directory, '*.rb')].sort
 
         hook_names = plugin_paths.map do |path|
@@ -85,6 +114,14 @@ module Overcommit
       @hash[hook_context.hook_class_name].keys.
         select { |hook_name| hook_name != 'ALL' }.
         select { |hook_name| built_in_hook?(hook_context, hook_name) }.
+        select { |hook_name| hook_enabled?(hook_context, hook_name) }
+    end
+
+    # Returns the ad hoc hooks that have been enabled for a hook type.
+    def enabled_ad_hoc_hooks(hook_context)
+      @hash[hook_context.hook_class_name].keys.
+        select { |hook_name| hook_name != 'ALL' }.
+        select { |hook_name| ad_hoc_hook?(hook_context, hook_name) }.
         select { |hook_name| hook_enabled?(hook_context, hook_name) }
     end
 
@@ -117,17 +154,25 @@ module Overcommit
     # environment variables.
     def apply_environment!(hook_context, env)
       skipped_hooks = "#{env['SKIP']} #{env['SKIP_CHECKS']} #{env['SKIP_HOOKS']}".split(/[:, ]/)
+      only_hooks = env.fetch('ONLY', '').split(/[:, ]/)
       hook_type = hook_context.hook_class_name
 
-      if skipped_hooks.include?('all') || skipped_hooks.include?('ALL')
+      if only_hooks.any? || skipped_hooks.include?('all') || skipped_hooks.include?('ALL')
         @hash[hook_type]['ALL']['skip'] = true
-      else
-        skipped_hooks.select { |hook_name| hook_exists?(hook_context, hook_name) }.
-                      map { |hook_name| Overcommit::Utils.camel_case(hook_name) }.
-                      each do |hook_name|
-          @hash[hook_type][hook_name] ||= {}
-          @hash[hook_type][hook_name]['skip'] = true
-        end
+      end
+
+      only_hooks.select { |hook_name| hook_exists?(hook_context, hook_name) }.
+                 map { |hook_name| Overcommit::Utils.camel_case(hook_name) }.
+                 each do |hook_name|
+        @hash[hook_type][hook_name] ||= {}
+        @hash[hook_type][hook_name]['skip'] = false
+      end
+
+      skipped_hooks.select { |hook_name| hook_exists?(hook_context, hook_name) }.
+                    map { |hook_name| Overcommit::Utils.camel_case(hook_name) }.
+                    each do |hook_name|
+        @hash[hook_type][hook_name] ||= {}
+        @hash[hook_type][hook_name]['skip'] = true
       end
     end
 
@@ -143,11 +188,78 @@ module Overcommit
       File.exist?(File.join(plugin_directory, hook_type_name, "#{hook_name}.rb"))
     end
 
+    # Return whether the signature for this configuration has changed since it
+    # was last calculated.
+    #
+    # @return [true,false]
+    def signature_changed?
+      signature != stored_signature
+    end
+
+    # Return whether a previous signature has been recorded for this
+    # configuration.
+    #
+    # @return [true,false]
+    def previous_signature?
+      !stored_signature.empty?
+    end
+
+    # Returns whether this configuration should verify itself by checking the
+    # stored configuration for the repo.
+    #
+    # @return [true,false]
+    def verify_signatures?
+      return false if ENV['OVERCOMMIT_NO_VERIFY']
+      return true if @hash['verify_signatures'] != false
+
+      result = Overcommit::Utils.execute(
+        %W[git config --local --get #{verify_signature_config_key}]
+      )
+
+      if result.status == 1 # Key doesn't exist
+        return true
+      elsif result.status != 0
+        raise Overcommit::Exceptions::GitConfigError,
+              "Unable to read from local repo git config: #{result.stderr}"
+      end
+
+      # We don't cast since we want to allow anything to count as "true" except
+      # a literal zero
+      result.stdout.strip != '0'
+    end
+
+    # Update the currently stored signature for this hook.
+    def update_signature!
+      result = Overcommit::Utils.execute(
+        %w[git config --local] + [signature_config_key, signature]
+      )
+
+      verify_signature_value = @hash['verify_signatures'] ? 1 : 0
+      result &&= Overcommit::Utils.execute(
+        %W[git config --local #{verify_signature_config_key} #{verify_signature_value}]
+      )
+
+      unless result.success?
+        raise Overcommit::Exceptions::GitConfigError,
+              "Unable to write to local repo git config: #{result.stderr}"
+      end
+    end
+
     protected
 
     attr_reader :hash
 
     private
+
+    def ad_hoc_hook?(hook_context, hook_name)
+      ad_hoc_conf = @hash.fetch(hook_context.hook_class_name, {}).fetch(hook_name, {})
+
+      # Ad hoc hooks are neither built-in nor have a plugin file written but
+      # still have a `command` specified to be run
+      !built_in_hook?(hook_context, hook_name) &&
+        !plugin_hook?(hook_context, hook_name) &&
+        (ad_hoc_conf['command'] || ad_hoc_conf['required_executable'])
+    end
 
     def built_in_hook?(hook_context, hook_name)
       hook_name = Overcommit::Utils.snake_case(hook_name)
@@ -158,7 +270,8 @@ module Overcommit
 
     def hook_exists?(hook_context, hook_name)
       built_in_hook?(hook_context, hook_name) ||
-        plugin_hook?(hook_context, hook_name)
+        plugin_hook?(hook_context, hook_name) ||
+        ad_hoc_hook?(hook_context, hook_name)
     end
 
     def hook_enabled?(hook_context_or_type, hook_name)
@@ -194,6 +307,42 @@ module Overcommit
           new
         end
       end
+    end
+
+    # Returns the unique signature of this configuration.
+    #
+    # @return [String]
+    def signature
+      Digest::SHA256.hexdigest(@hash.to_json)
+    end
+
+    # Returns the stored signature of this repo's Overcommit configuration.
+    #
+    # This is intended to be compared against the current signature of this
+    # configuration object.
+    #
+    # @return [String]
+    def stored_signature
+      result = Overcommit::Utils.execute(
+        %w[git config --local --get] + [signature_config_key]
+      )
+
+      if result.status == 1 # Key doesn't exist
+        return ''
+      elsif result.status != 0
+        raise Overcommit::Exceptions::GitConfigError,
+              "Unable to read from local repo git config: #{result.stderr}"
+      end
+
+      result.stdout.chomp
+    end
+
+    def signature_config_key
+      'overcommit.configuration.signature'
+    end
+
+    def verify_signature_config_key
+      'overcommit.configuration.verifysignatures'
     end
   end
 end

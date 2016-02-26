@@ -7,7 +7,9 @@
 * Include the steps you carried out to produce the problem.
 * Include the behavior you observed along with the behavior you expected, and
   why you expected it.
-* Include the stack trace reported by Overcommit if there is one.
+* Try setting the `OVERCOMMIT_DEBUG` environment variable to enable the display
+  of additional verbose output from executed commands.
+* Include the stack trace and any debugging output reported by Overcommit.
 
 ## Feature Requests
 
@@ -74,3 +76,10 @@ ability to deduce the name of a hook from its filename and vice versa.
 [1]: https://github.com/brigade/overcommit/issues
 [2]: https://medium.com/brigade-engineering/the-secrets-to-great-commit-messages-106fc0a92a25
 [3]: https://travis-ci.org/
+
+## Code of conduct
+
+This project adheres to the [Open Code of Conduct][code-of-conduct]. By
+participating, you are expected to honor this code.
+
+[code-of-conduct]: https://github.com/brigade/code-of-conduct

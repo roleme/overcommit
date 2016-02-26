@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Overcommit
   # Utility class that encapsulates the handling of hook messages and whether
   # they affect lines the user has modified or not.
@@ -6,10 +8,12 @@ module Overcommit
   # output tuple from an array of {Overcommit::Hook::Message}s, respecting the
   # configuration settings for the given hook.
   class MessageProcessor
-    ERRORS_MODIFIED_HEADER = 'Errors on modified lines:'
-    WARNINGS_MODIFIED_HEADER = 'Warnings on modified lines:'
-    ERRORS_UNMODIFIED_HEADER = "Errors on lines you didn't modify:"
-    WARNINGS_UNMODIFIED_HEADER = "Warnings on lines you didn't modify:"
+    ERRORS_MODIFIED_HEADER = 'Errors on modified lines:'.freeze
+    WARNINGS_MODIFIED_HEADER = 'Warnings on modified lines:'.freeze
+    ERRORS_UNMODIFIED_HEADER = "Errors on lines you didn't modify:".freeze
+    WARNINGS_UNMODIFIED_HEADER = "Warnings on lines you didn't modify:".freeze
+    ERRORS_GENERIC_HEADER = 'Errors:'.freeze
+    WARNINGS_GENERIC_HEADER = 'Warnings:'.freeze
 
     # @param hook [Overcommit::Hook::Base]
     # @param unmodified_lines_setting [String] how to treat messages on
@@ -40,10 +44,19 @@ module Overcommit
     def handle_modified_lines(messages, status)
       messages = remove_ignored_messages(messages)
 
-      messages_on_modified_lines, messages_on_unmodified_lines =
-        messages.partition { |message| message_on_modified_line?(message) }
+      messages_with_line, generic_messages = messages.partition(&:line)
 
+      # Always print generic messages first
       output = print_messages(
+        generic_messages,
+        ERRORS_GENERIC_HEADER,
+        WARNINGS_GENERIC_HEADER
+      )
+
+      messages_on_modified_lines, messages_on_unmodified_lines =
+        messages_with_line.partition { |message| message_on_modified_line?(message) }
+
+      output += print_messages(
         messages_on_modified_lines,
         ERRORS_MODIFIED_HEADER,
         WARNINGS_MODIFIED_HEADER
@@ -54,7 +67,7 @@ module Overcommit
         WARNINGS_UNMODIFIED_HEADER
       )
 
-      [transform_status(status, messages_on_modified_lines), output]
+      [transform_status(status, generic_messages + messages_on_modified_lines), output]
     end
 
     def transform_status(status, messages_on_modified_lines)

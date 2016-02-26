@@ -2,12 +2,24 @@ PreCommit:
   BundleCheck:
     enabled: true
 
+  ExecutePermissions:
+    enabled: true
+    exclude:
+      - 'bin/overcommit'
+      - 'libexec/**/*'
+      - 'template-dir/hooks/**/*'
+
   HardTabs:
     enabled: true
 
   RuboCop:
     enabled: true
     command: ['bundle', 'exec', 'rubocop']
+    include:
+      - '**/*.gemspec'
+      - '**/*.rb'
+      - '**/Gemfile'
+      - template-dir/hooks/overcommit-hook
 
   TravisLint:
     enabled: true

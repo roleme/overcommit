@@ -1,9 +1,178 @@
 # Overcommit Changelog
 
-## master (unreleased)
+## 0.32.0
+
+### New Features
+
+* Hooks are now run in parallel by default
+* Add `concurrency` global option allowing you to specify the number of threads
+  to use when running hooks concurrently
+* Add `parallelize` hook option which specifies whether or not this hook should
+  be run in parallel (default is `true`)
+* Add `processors` hook option allowing you to specify how many processing
+  units a hook should require
+* Add `ForbiddenBranches` pre-commit hook which prevents creating a commit
+  on any blacklisted branch by name/pattern
+* Add `MessageFormat` commit-msg hook to validate commit messages against
+  a regex pattern
+
+### Changes
+
+* Improve error message output when there is a problem processing messages
+  via `extract_messages` pre-commit hook helper
+* Switch `ScssLint` pre-commit hook to use the JSON output formatter instead
+  of the default formatter
+* Change tense of hook descriptions from progressive indicative form ("Running")
+  to indicative present form ("Run") so output reads better in parallel hook
+  runs
+
+### Bug Fixes
+
+* Fix bug where amending a commit with command line arguments containing
+  Unicode characters could cause a crash due to invalid byte sequences
+* Fix `Minitest` pre-push hook to include all test files
+
+## 0.32.0.rc1
+
+* Add `concurrency` global option allowing you to specify the number of threads
+  to use when running hooks concurrently
+* Add `parallelize` hook option which specifies whether or not this hook should
+  be run in parallel (default is `true`)
+* Add `processors` hook option allowing you to specify how many processing
+  units a hook should require
+
+## 0.31.0
+
+* Add support for glob patterns to `ProtectedBranches` pre-push hook
+* Add `Mdl` pre-commit hook to run
+  [`mdl`](https://github.com/mivok/markdownlint) on Markdown files
+* Add `--without-color` flag to `RailsBestPractices` pre-commit hook
+  to fix parsing issues due to color escape sequences
+* Improve error message when `gemfile` has not had a dependency installed
+* Fix `RuboCop` pre-commit hook to not swallow cop messages when `parser` gem
+  warnings are output to STDERR
+
+## 0.30.0
+
+### New Features
+
+* Add `Dogma` pre-commit hook to lint Elixir files with
+  [dogma](http://elixir-lang.org/) files
+* Add `Minitest` pre-push hook to run Minitest tests
+* Add `RailsBestPractices` pre-commit hook which lints code with
+  [`rails_best_practices`](https://github.com/railsbp/rails_best_practices)
+
+### Bug Fixes
+
+* Fix `--run` flag to not block reading STDIN when using existing hook scripts
+* Fix `RuboCop` pre-commit hook to fail when RuboCop version specified by
+  Bundler context is not available
+* Fix `TextWidth` commit-msg hook to not include newline characters in
+  calculated width
+
+## 0.29.1
+
+* Raise error when hooks are defined with invalid names (i.e. non-alphanumeric
+  characters)
+* Fix hook signing when specifying hook name
+* Fix `BundleCheck` pre-commit hook to not report false negatives when running
+  via `overcommit --run` with local changes
+
+## 0.29.0
+
+### Important Security Fix
+
+* Fix vulnerability where disabling signature verification would not be caught
+  by signature verification, allowing an attacker to bypass the check. If you
+  disable signature verification in your configuration, you must rename the
+  option to `verify_signatures` and should audit your hooks.
+
+### New Features
+
+* Allow nested arrays in `include` and `exclude` options so lists of file
+  glob patterns can be shared across hook configurations via YAML references
+* Add `NginxTest` pre-commit hook that checks nginx configuration files with
+  [`nginx -t`](https://www.nginx.com/resources/wiki/start/topics/tutorials/commandline/)
+* Respect `core.commentchar` configuration when reading commit messages
+
+### Changes
+
+* Rename `verify_plugin_signatures` to `verify_signatures`
+
+### Bug Fixes
+
+* Fix `Jscs` pre-commit hook to handle the new `jscs`
+  [exit codes](https://github.com/jscs-dev/node-jscs/wiki/Exit-codes) introduced
+  as of 2.2.0
+* Fix `Scalastyle` pre-commit hook to fail with non-zero exit statuses
+
+## 0.28.0
+
+* Ensure `applicable_files` hook helper returns files in lexicographic order
+* Add `NpmInstall` post-checkout, post-commit, post-merge, and post-rewrite hooks
+* Add `PuppetLint` pre-commit hook that checks Puppet code with
+  [puppet-lint](http://puppet-lint.com/)
+* Add `BowerInstall` post-checkout, post-commit, post-merge, and post-rewrite hooks
+* Add `BundleInstall` post-checkout, post-commit, post-merge, and post-rewrite hooks
+* Add `Sqlint` pre-commit hook that checks SQL code with
+  [sqlint](https://github.com/purcell/sqlint)
+* Add Windows support
+* Add `Hlint` pre-commit hook that checks Haskell files with
+  [hlint](https://github.com/ndmitchell/hlint)
+* Add `ExecutePermissions` pre-commit hook that checks file mode for
+  unnecessary execute permissions
+
+## 0.27.0
+
+### New Features
+
+* Add `HtmlHint` pre-commit hook that checks HTML files with
+  [HTMLHint](http://htmlhint.com/)
+* Add support to the hook `execute` helper for accepting an optional list of
+  splittable command arguments for transparently dealing with really long file
+  lists and the operating system command length limit
+* Add `modified_files` helper to `PostCheckout` and `PostRewrite` hooks
+* Add `rewritten_commits` helper to `PostRewrite` hooks
+* Add `gemfile` option to configuration file which allows a `Gemfile` to be
+  loaded by Bundler to enforce particular gem versions during hook runs
+* Add support for `OVERCOMMIT_DEBUG` environment variable which toggles the
+  display of additional verbose output from executed commands
+* Add support for defining
+  [hooks based on your existing git hooks](README.md#adding-existing-git-hooks)
+  within your `.overcommit.yml` (no Ruby code required)
+* Add support for filtering all hooks except a small list via the `ONLY`
+  environment variable (similar to `SKIP` except a whitelist instead of
+  blacklist)
+
+### Changes
+
+* Don't display "No applicable _hook-type_ hooks to run" message unless debug
+  mode is enabled
+
+### Bug Fixes
+
+* Fix pre-commit hook bug where amending a commit which breaks a symlink would
+  result in that symlink not being included in the list of modified files
+* Fix `CaseConflicts` pre-commit hook handling of large sets of files
+* Fix `SemiStandard`/`Standard` hooks to read from `STDOUT` instead of `STDERR`
+  and handle new output format
+* Fix `commit-msg` hooks to handle large commit messages auto-generated by the
+  `--verbose` flag for `git commit`
+
+## 0.26.0
+
+### New Features
 
 * Add `EmptyMessage` commit-msg hook that reports commits messages that are
   empty or contain only whitespace
+* Add `env` hook configuration option that allows you to set values for
+  environment variables during the course of a particular hook's run
+
+### Bug Fixes
+
+* Fix handling of paths with spaces in the name
+* Fix `CaseConflicts` pre-commit hook to not fail on initial commit
+* Fix handling of files removed or renamed in a commit amendment
 
 ## 0.25.0
 

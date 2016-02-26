@@ -1,7 +1,7 @@
 module Overcommit
   # Responsible for loading the hooks the repository has configured and running
   # them, collecting and displaying the results.
-  class HookRunner
+  class HookRunner # rubocop:disable Metrics/ClassLength
     # @param config [Overcommit::Configuration]
     # @param logger [Overcommit::Logger]
     # @param context [Overcommit::HookContext]
@@ -12,6 +12,10 @@ module Overcommit
       @context = context
       @printer = printer
       @hooks = []
+
+      @lock = Mutex.new
+      @resource = ConditionVariable.new
+      @slots_available = @config.concurrency
     end
 
     # Loads and runs the hooks registered for this {HookRunner}.
@@ -51,78 +55,123 @@ module Overcommit
       if @hooks.any?(&:enabled?)
         @printer.start_run
 
-        interrupted = false
-        run_failed = false
-        run_warned = false
+        # Sort so hooks requiring fewer processors get queued first. This
+        # ensures we make better use of our available processors
+        @hooks_left = @hooks.sort_by { |hook| processors_for_hook(hook) }
+        @threads = Array.new(@config.concurrency) { Thread.new(&method(:consume)) }
 
-        @hooks.each do |hook|
-          hook_status = run_hook(hook)
-
-          run_failed = true if hook_status == :fail
-          run_warned = true if hook_status == :warn
-
-          if hook_status == :interrupt
-            # Stop running any more hooks and assume a bad result
-            interrupted = true
-            break
+        begin
+          InterruptHandler.disable_until_finished_or_interrupted do
+            @threads.each(&:join)
           end
+        rescue Interrupt
+          @printer.interrupt_triggered
+          # We received an interrupt on the main thread, so alert the
+          # remaining workers that an exception occurred
+          @interrupted = true
+          @threads.each { |thread| thread.raise Interrupt }
         end
 
-        print_results(run_failed, run_warned, interrupted)
+        print_results
 
-        !(run_failed || interrupted)
+        !(@failed || @interrupted)
       else
         @printer.nothing_to_run
         true # Run was successful
       end
     end
 
-    # @param failed [Boolean]
-    # @param warned [Boolean]
-    # @param interrupted [Boolean]
-    def print_results(failed, warned, interrupted)
-      if interrupted
+    def consume
+      loop do
+        hook = @lock.synchronize { @hooks_left.pop }
+        break unless hook
+        run_hook(hook)
+      end
+    end
+
+    def wait_for_slot(hook)
+      @lock.synchronize do
+        slots_needed = processors_for_hook(hook)
+
+        loop do
+          if @slots_available >= slots_needed
+            @slots_available -= slots_needed
+
+            # Give another thread a chance since there are still slots available
+            @resource.signal if @slots_available > 0
+            break
+          elsif @slots_available > 0
+            # It's possible that another hook that requires fewer slots can be
+            # served, so give another a chance
+            @resource.signal
+
+            # Wait for a signal from another thread to try again
+            @resource.wait(@lock)
+          end
+        end
+      end
+    end
+
+    def release_slot(hook)
+      @lock.synchronize do
+        slots_released = processors_for_hook(hook)
+        @slots_available += slots_released
+
+        if @hooks_left.any?
+          # Signal once. `wait_for_slot` will perform additional signals if
+          # there are still slots available. This prevents us from sending out
+          # useless signals
+          @resource.signal
+        end
+      end
+    end
+
+    def processors_for_hook(hook)
+      hook.parallelize? ? hook.processors : @config.concurrency
+    end
+
+    def print_results
+      if @interrupted
         @printer.run_interrupted
-      elsif failed
+      elsif @failed
         @printer.run_failed
-      elsif warned
+      elsif @warned
         @printer.run_warned
       else
         @printer.run_succeeded
       end
     end
 
-    def run_hook(hook)
-      return if should_skip?(hook)
-
-      @printer.start_hook(hook)
-
+    def run_hook(hook) # rubocop:disable Metrics/CyclomaticComplexity
       status, output = nil, nil
 
       begin
-        # Disable the interrupt handler during individual hook run so that
-        # Ctrl-C actually stops the current hook from being run, but doesn't
-        # halt the entire process.
-        InterruptHandler.disable_until_finished_or_interrupted do
-          status, output = hook.run_and_transform
-        end
+        wait_for_slot(hook)
+        return if should_skip?(hook)
+
+        status, output = hook.run_and_transform
+      rescue Overcommit::Exceptions::MessageProcessingError => ex
+        status = :fail
+        output = ex.message
       rescue => ex
         status = :fail
         output = "Hook raised unexpected error\n#{ex.message}\n#{ex.backtrace.join("\n")}"
-      rescue Interrupt
-        # At this point, interrupt has been handled and protection is back in
-        # effect thanks to the InterruptHandler.
-        status = :interrupt
-        output = 'Hook was interrupted by Ctrl-C; restoring repo state...'
       end
 
-      @printer.end_hook(hook, status, output)
+      @failed = true if status == :fail
+      @warned = true if status == :warn
+
+      @printer.end_hook(hook, status, output) unless @interrupted
 
       status
+    rescue Interrupt
+      @interrupted = true
+    ensure
+      release_slot(hook)
     end
 
     def should_skip?(hook)
-      return true unless hook.enabled?
+      return true if @interrupted || !hook.enabled?
 
       if hook.skip?
         if hook.required?
@@ -144,6 +193,18 @@ module Overcommit
 
       # Load plugin hooks after so they can subclass existing hooks
       @hooks += HookLoader::PluginHookLoader.new(@config, @context, @log).load_hooks
+    rescue LoadError => ex
+      # Include a more helpful message that will probably save some confusion
+      message = 'A load error occurred. ' +
+        if @config['gemfile']
+          "Did you forget to specify a gem in your `#{@config['gemfile']}`?"
+        else
+          'Did you forget to install a gem?'
+        end
+
+      raise Overcommit::Exceptions::HookLoadError,
+            "#{message}\n#{ex.message}",
+            ex.backtrace
     end
   end
 end

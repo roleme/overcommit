@@ -10,13 +10,26 @@ describe Overcommit::Hook::PreCommit::RuboCop do
   end
 
   context 'when rubocop exits successfully' do
+    let(:result) { double('result') }
+
     before do
-      result = double('result')
-      result.stub(:success?).and_return(true)
+      result.stub(success?: true, stderr: '', stdout: '')
       subject.stub(:execute).and_return(result)
     end
 
     it { should pass }
+
+    context 'and it printed warnings to stderr' do
+      before do
+        result.stub(:stderr).and_return(normalize_indent(<<-MSG))
+          warning: parser/current is loading parser/ruby21, which recognizes
+          warning: 2.1.8-compliant syntax, but you are running 2.1.1.
+          warning: please see https://github.com/whitequark/parser#compatibility-with-ruby-mri.
+        MSG
+      end
+
+      it { should pass }
+    end
   end
 
   context 'when rubocop exits unsucessfully' do
@@ -36,6 +49,18 @@ describe Overcommit::Hook::PreCommit::RuboCop do
       end
 
       it { should warn }
+
+      context 'and it printed warnings to stderr' do
+        before do
+          result.stub(:stderr).and_return(normalize_indent(<<-MSG))
+            warning: parser/current is loading parser/ruby21, which recognizes
+            warning: 2.1.8-compliant syntax, but you are running 2.1.1.
+            warning: please see https://github.com/whitequark/parser#compatibility-with-ruby-mri.
+          MSG
+        end
+
+        it { should warn }
+      end
     end
 
     context 'and it reports an error' do
@@ -44,6 +69,29 @@ describe Overcommit::Hook::PreCommit::RuboCop do
           'file1.rb:1:1: C: Missing top-level class documentation',
         ].join("\n"))
         result.stub(:stderr).and_return('')
+      end
+
+      it { should fail_hook }
+
+      context 'and it printed warnings to stderr' do
+        before do
+          result.stub(:stderr).and_return(normalize_indent(<<-MSG))
+            warning: parser/current is loading parser/ruby21, which recognizes
+            warning: 2.1.8-compliant syntax, but you are running 2.1.1.
+            warning: please see https://github.com/whitequark/parser#compatibility-with-ruby-mri.
+          MSG
+        end
+
+        it { should fail_hook }
+      end
+    end
+
+    context 'when a generic error message is written to stderr' do
+      before do
+        result.stub(:stdout).and_return('')
+        result.stub(:stderr).and_return([
+          'Could not find rubocop in any of the sources'
+        ].join("\n"))
       end
 
       it { should fail_hook }

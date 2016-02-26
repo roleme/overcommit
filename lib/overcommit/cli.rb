@@ -1,3 +1,4 @@
+require 'overcommit'
 require 'optparse'
 
 module Overcommit
@@ -9,6 +10,8 @@ module Overcommit
       @input     = input
       @log       = logger
       @options   = {}
+
+      Overcommit::Utils.log = logger
     end
 
     def run
@@ -19,8 +22,8 @@ module Overcommit
         install_or_uninstall
       when :template_dir
         print_template_directory_path
-      when :sign_plugins
-        sign_plugins
+      when :sign
+        sign
       when :run_all
         run_all
       end
@@ -92,9 +95,9 @@ module Overcommit
     end
 
     def add_other_options(opts)
-      opts.on('-s', '--sign hook', 'Update plugin signatures for hook', String) do |hook|
-        @options[:action] = :sign_plugins
-        @options[:hook_to_sign] = hook
+      opts.on('-s', '--sign [hook]', 'Update hook signatures', String) do |hook_to_sign|
+        @options[:hook_to_sign] = hook_to_sign if hook_to_sign.is_a?(String)
+        @options[:action] = :sign
       end
 
       opts.on('-t', '--template-dir', 'Print location of template directory') do
@@ -172,19 +175,26 @@ module Overcommit
       end
     end
 
-    def sign_plugins
-      context = Overcommit::HookContext.create(@options[:hook_to_sign],
-                                               config,
-                                               @arguments,
-                                               @input)
-      Overcommit::HookLoader::PluginHookLoader.new(config,
-                                                   context,
-                                                   log).update_signatures
+    def sign
+      if @options[:hook_to_sign]
+        context = Overcommit::HookContext.create(@options[:hook_to_sign],
+                                                 config,
+                                                 @arguments,
+                                                 @input)
+        Overcommit::HookLoader::PluginHookLoader.new(config,
+                                                     context,
+                                                     log).update_signatures
+      else
+        log.log 'Updating signature for configuration file...'
+        config(verify: false).update_signature!
+      end
+
       halt
     end
 
     def run_all
-      context = Overcommit::HookContext.create('run-all', config, @arguments, @input)
+      empty_stdin = File.open(File::NULL) # pre-commit hooks don't take input
+      context = Overcommit::HookContext.create('run-all', config, @arguments, empty_stdin)
       config.apply_environment!(context, ENV)
 
       printer = Overcommit::Printer.new(log, context)
@@ -201,8 +211,8 @@ module Overcommit
     end
 
     # Returns the configuration for this repository.
-    def config
-      @config ||= Overcommit::ConfigurationLoader.new(log).load_repo_config
+    def config(options = {})
+      @config ||= Overcommit::ConfigurationLoader.new(log, options).load_repo_config
     end
   end
 end

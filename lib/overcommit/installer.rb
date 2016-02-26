@@ -114,7 +114,8 @@ module Overcommit
                   "Hook '#{File.expand_path(hook_type)}' already exists and " \
                   'was not installed by Overcommit'
           end
-          FileUtils.ln_sf('overcommit-hook', hook_type)
+          FileUtils.rm_f(hook_type)
+          Overcommit::Utils::FileUtils.symlink('overcommit-hook', hook_type)
         end
       end
     end
@@ -177,7 +178,8 @@ module Overcommit
     def overcommit_hook?(file)
       return true if File.read(file) =~ /OVERCOMMIT_DISABLE/
       # TODO: Remove these checks once we hit version 1.0
-      File.symlink?(file) && File.readlink(file) == 'overcommit-hook'
+      Overcommit::Utils::FileUtils.symlink?(file) &&
+        Overcommit::Utils::FileUtils.readlink(file) == 'overcommit-hook'
     rescue Errno::ENOENT
       # Some Ruby implementations (e.g. JRuby) raise an error when the file
       # doesn't exist. Standardize the behavior to return false.

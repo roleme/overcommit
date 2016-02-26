@@ -6,8 +6,8 @@ describe Overcommit::Hook::CommitMsg::TextWidth do
   subject { described_class.new(config, context) }
 
   before do
-    subject.stub(:commit_message_lines).and_return(commit_msg.split("\n"))
-    subject.stub(:empty_message?).and_return(commit_msg.empty?)
+    context.stub(:commit_message_lines).and_return(commit_msg.lines.to_a)
+    context.stub(:empty_message?).and_return(commit_msg.empty?)
   end
 
   context 'when commit message is empty' do
@@ -24,6 +24,27 @@ describe Overcommit::Hook::CommitMsg::TextWidth do
 
   context 'when subject is 60 characters or fewer' do
     let(:commit_msg) { 'A' * 60 }
+
+    it { should pass }
+  end
+
+  context 'when the subject is 60 characters followed by a newline' do
+    let(:commit_msg) { <<-MSG }
+      This is 60 characters, or 61 if the newline is counted
+
+      A reasonable line.
+    MSG
+
+    it { should pass }
+  end
+
+  context 'when a line in the message is 72 characters followed by a newline' do
+    let(:commit_msg) { <<-MSG }
+      Some summary
+
+      This line has 72 characters, but with newline it has 73 characters
+      That shouldn't be a problem.
+    MSG
 
     it { should pass }
   end

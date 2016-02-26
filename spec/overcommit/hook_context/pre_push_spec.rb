@@ -89,6 +89,21 @@ describe Overcommit::HookContext::PrePush do
 
         it { should == true }
       end
+
+      context 'when remote ref head does not exist locally' do
+        let(:git_error_msg) { "fatal: bad object #{remote_sha1}" }
+
+        before do
+          pushed_ref.stub(created?: false, deleted?: false)
+          result = double(success?: false, stderr: git_error_msg)
+          Overcommit::Subprocess.stub(:spawn).and_return(result)
+        end
+
+        it 'should raise' do
+          expect { subject }.to raise_error(Overcommit::Exceptions::GitRevListError,
+                                            /#{git_error_msg}/)
+        end
+      end
     end
 
     describe '#created?' do
@@ -125,6 +140,34 @@ describe Overcommit::HookContext::PrePush do
       context 'when not deleting a ref' do
         before do
           pushed_ref.stub(:local_sha1).and_return(random_hash)
+        end
+
+        it { should == false }
+      end
+    end
+
+    describe '#destructive?' do
+      subject { pushed_ref.destructive? }
+
+      context 'when deleting a ref' do
+        before do
+          pushed_ref.stub(:deleted?).and_return(true)
+        end
+
+        it { should == true }
+      end
+
+      context 'when force-pushing a ref' do
+        before do
+          pushed_ref.stub(deleted?: false, forced?: true)
+        end
+
+        it { should == true }
+      end
+
+      context 'when not deleting or force-pushing a ref' do
+        before do
+          pushed_ref.stub(deleted?: false, forced?: false)
         end
 
         it { should == false }

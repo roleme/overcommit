@@ -7,15 +7,23 @@ module ShellHelpers
     Overcommit::Subprocess.spawn(command)
   end
 
+  def symlink(source, dest)
+    Overcommit::Utils::FileUtils.symlink(source, dest)
+  end
+
+  def touch(file)
+    FileUtils.touch(file)
+  end
+
   # Wait until the specified condition is true or the given timeout has elapsed,
   # whichever comes first.
   #
   # @param options [Hash]
   # @raise [Timeout::TimeoutError] timeout has elapsed before condition holds
-  def wait_until(options = {}, &block)
+  def wait_until(options = {})
     Timeout.timeout(options.fetch(:timeout, 1)) do
       loop do
-        return if block.call
+        return if yield
         sleep options.fetch(:check_interval, 0.1)
       end
     end
